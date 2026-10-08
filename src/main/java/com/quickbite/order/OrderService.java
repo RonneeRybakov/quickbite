@@ -72,8 +72,10 @@ public class OrderService {
                 .map(CartLine::subtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        String generatedId = "QB-" + (1000 + repository.count() + 1);
+
         Order order = new Order(
-                UUID.randomUUID().toString(),
+                generatedId,
                 cart.getRestaurant(),
                 items,
                 total,
