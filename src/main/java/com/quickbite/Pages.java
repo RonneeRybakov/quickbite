@@ -227,6 +227,9 @@ public final class Pages {
                 .append("</p>")
                 .append(orderItems(order.items(), order.total()))
                 .append("</div>")
+                .append("<p><a href='/order/status?id=")
+                .append(esc(order.id()))
+                .append("'>View Order Status &rarr;</a></p>")
                 .append("<p><a href='/'>Back to restaurants</a></p>");
 
         return layout("Order Summary", cart, body.toString());
