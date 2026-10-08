@@ -1,3 +1,4 @@
+
 package com.quickbite;
 
 import java.io.IOException;
@@ -8,6 +9,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.quickbite.cart.Cart;
 import com.quickbite.menu.MenuItem;
@@ -22,7 +24,7 @@ public class App {
     private static final int PORT = 8080;
 
     private final RestaurantCatalog catalog = new RestaurantCatalog();
-    private final Map<String, Visitor> visitors = new HashMap<>();
+    private final Map<String, Visitor> visitors = new ConcurrentHashMap<>();
 
     /** What we remember about one browser between requests. */
     private static class Visitor {
@@ -41,6 +43,13 @@ public class App {
 
     private void handle(HttpExchange exchange) throws IOException {
         Visitor visitor = visitorFor(exchange);
+
+        synchronized (visitor) {
+            handleRequest(exchange, visitor);
+        }
+    }
+
+    private void handleRequest(HttpExchange exchange, Visitor visitor) throws IOException {
         String method = exchange.getRequestMethod();
         String path = exchange.getRequestURI().getPath();
 
@@ -58,11 +67,19 @@ public class App {
             sendHtml(exchange, 200, Pages.menu(restaurant.get(), visitor.cart, takeMessage(visitor), takeError(visitor)));
 
         } else if (method.equals("GET") && path.equals("/cart")) {
-            // PBI-03: view the cart
-            sendHtml(exchange, 200, Pages.cart(visitor.cart, takeMessage(visitor)));
+            // PBI-03 and PBI-04: view and edit the cart
+            sendHtml(exchange, 200, Pages.cart(visitor.cart, takeMessage(visitor), takeError(visitor)));
 
         } else if (method.equals("POST") && path.equals("/cart/add")) {
             addToCart(exchange, visitor);
+
+        } else if (method.equals("POST") && path.equals("/cart/update")) {
+            // PBI-04: update item quantity
+            updateCart(exchange, visitor);
+
+        } else if (method.equals("POST") && path.equals("/cart/remove")) {
+            // PBI-04: remove an individual item
+            removeFromCart(exchange, visitor);
 
         } else if (method.equals("POST") && path.equals("/cart/clear")) {
             visitor.cart.clear();
@@ -85,11 +102,55 @@ public class App {
 
         if (visitor.cart.add(restaurant.get(), item.get())) {
             visitor.message = item.get().name() + " added to your cart.";
+            visitor.error = null;
         } else {
             visitor.error = "Your cart has items from " + visitor.cart.getRestaurant().name()
                     + ". Clear your cart before ordering from another restaurant.";
+            visitor.message = null;
         }
         redirect(exchange, "/restaurants/" + restaurant.get().id());
+    }
+
+    /** PBI-04: Updates the quantity of an item in the cart. */
+    private void updateCart(HttpExchange exchange, Visitor visitor) throws IOException {
+        Map<String, String> form = readForm(exchange);
+        String itemId = form.getOrDefault("itemId", "");
+        String quantityInput = form.getOrDefault("quantity", "");
+
+        visitor.message = null;
+        visitor.error = null;
+
+        try {
+            int quantity = Integer.parseInt(quantityInput);
+
+            if (visitor.cart.updateQuantity(itemId, quantity)) {
+                visitor.message = "Item quantity updated.";
+            } else {
+                visitor.error = "Invalid quantity or item.";
+            }
+
+        } catch (NumberFormatException e) {
+            visitor.error = "Please enter a positive whole number.";
+        }
+
+        redirect(exchange, "/cart");
+    }
+
+    /** PBI-04: Removes an individual item from the cart. */
+    private void removeFromCart(HttpExchange exchange, Visitor visitor) throws IOException {
+        Map<String, String> form = readForm(exchange);
+        String itemId = form.getOrDefault("itemId", "");
+
+        visitor.message = null;
+        visitor.error = null;
+
+        if (visitor.cart.removeItem(itemId)) {
+            visitor.message = "Item removed from your cart.";
+        } else {
+            visitor.error = "Item not found in your cart.";
+        }
+
+        redirect(exchange, "/cart");
     }
 
     // --- Small HTTP helpers ---
@@ -108,7 +169,7 @@ public class App {
         String id = UUID.randomUUID().toString();
         Visitor visitor = new Visitor();
         visitors.put(id, visitor);
-        exchange.getResponseHeaders().add("Set-Cookie", "session=" + id + "; Path=/; HttpOnly");
+        exchange.getResponseHeaders().add("Set-Cookie", "session=" + id + "; Path=/; HttpOnly; SameSite=Lax");
         return visitor;
     }
 
