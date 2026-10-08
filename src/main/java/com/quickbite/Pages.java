@@ -11,6 +11,7 @@ import com.quickbite.cart.Cart;
 import com.quickbite.cart.CartLine;
 import com.quickbite.menu.MenuItem;
 import com.quickbite.menu.Restaurant;
+import com.quickbite.order.Order;
 
 /** Builds the HTML for each page. */
 public final class Pages {
@@ -68,7 +69,9 @@ public final class Pages {
     /** PBI-02: restaurant menu with Add to cart buttons. */
     public static String menu(Restaurant restaurant, Cart cart,
                               String message, String error) {
-        StringBuilder body = new StringBuilder("<p><a href='/'>&larr; All restaurants</a></p>")
+
+        StringBuilder body = new StringBuilder(
+                "<p><a href='/'>&larr; All restaurants</a></p>")
                 .append("<h1>").append(esc(restaurant.name())).append("</h1>")
                 .append(flash(message, error));
 
@@ -141,8 +144,6 @@ public final class Pages {
                     .append("<form method='post' action='/cart/clear'>")
                     .append("<button type='submit'>Clear cart</button>")
                     .append("</form>")
-
-                    // PBI-05: checkout button
                     .append("<div class='checkout'>")
                     .append("<a href='/checkout'>Proceed to Checkout</a>")
                     .append("</div>");
@@ -151,9 +152,10 @@ public final class Pages {
         return layout("Your cart", cart, body.toString());
     }
 
-    /** PBI-05: Displays configured pickup times during checkout. */
+    /** PBI-05: Displays pickup times during checkout. */
     public static String checkout(Cart cart, List<LocalDateTime> slots,
                                   String selected, String error) {
+
         StringBuilder body = new StringBuilder("<h1>Checkout</h1>")
                 .append(flash(null, error));
 
@@ -169,7 +171,7 @@ public final class Pages {
                 .append(esc(restaurant.name()))
                 .append("</strong></p>")
                 .append("<h2>Order details</h2>")
-                .append(orderItems(cart))
+                .append(orderItems(cart.getLines(), cart.getTotal()))
                 .append("<h2>Select a pickup time</h2>");
 
         if (slots.isEmpty()) {
@@ -205,42 +207,39 @@ public final class Pages {
         return layout("Checkout", cart, body.toString());
     }
 
-    /** PBI-05: Builds the order summary after successful validation. */
-    public static String buildOrderSummary(Cart cart, LocalDateTime pickupTime) {
-        if (cart.isEmpty()) {
-            throw new IllegalArgumentException("Cannot summarize an empty cart.");
-        }
-
-        StringBuilder body = new StringBuilder("<div class='summary'>")
-                .append("<h2>Order details</h2>")
+    /** PBI-06: Displays a saved order and its Received status. */
+    public static String orderSummary(Order order, Cart cart) {
+        StringBuilder body = new StringBuilder("<h1>Order submitted!</h1>")
+                .append("<p class='message'>Your order has been received.</p>")
+                .append("<div class='summary'>")
+                .append("<h2>Order summary</h2>")
+                .append("<p><strong>Order ID:</strong> ")
+                .append(esc(order.id()))
+                .append("</p>")
+                .append("<p><strong>Status:</strong> ")
+                .append(esc(order.status().name()))
+                .append("</p>")
                 .append("<p><strong>Restaurant:</strong> ")
-                .append(esc(cart.getRestaurant().name()))
+                .append(esc(order.restaurant().name()))
                 .append("</p>")
                 .append("<p><strong>Pickup time:</strong> ")
-                .append(esc(pickupTime.format(PICKUP_FORMAT)))
+                .append(esc(order.pickupTime().format(PICKUP_FORMAT)))
                 .append("</p>")
-                .append(orderItems(cart))
-                .append("</div>");
+                .append(orderItems(order.items(), order.total()))
+                .append("</div>")
+                .append("<p><a href='/'>Back to restaurants</a></p>");
 
-        return body.toString();
+        return layout("Order Summary", cart, body.toString());
     }
 
-    /** PBI-05: Displays the confirmed order summary. */
-    public static String orderSummary(String summary, Cart cart) {
-        String body = "<h1>Order submitted!</h1>"
-                + "<p class='message'>Your pickup time has been confirmed.</p>"
-                + summary
-                + "<p><a href='/'>Back to restaurants</a></p>";
+    /** Displays order items, quantities, subtotals and total. */
+    private static String orderItems(
+            java.util.Collection<CartLine> items, BigDecimal total) {
 
-        return layout("Order Summary", cart, body);
-    }
-
-    /** Displays items, quantities, subtotals and the order total. */
-    private static String orderItems(Cart cart) {
         StringBuilder body = new StringBuilder(
                 "<table><tr><th>Item</th><th>Quantity</th><th>Subtotal</th></tr>");
 
-        for (CartLine line : cart.getLines()) {
+        for (CartLine line : items) {
             body.append("<tr><td>")
                     .append(esc(line.item().name()))
                     .append("</td><td>")
@@ -251,7 +250,7 @@ public final class Pages {
         }
 
         body.append("<tr><th colspan='2'>Total</th><th>")
-                .append(money(cart.getTotal()))
+                .append(money(total))
                 .append("</th></tr></table>");
 
         return body.toString();
