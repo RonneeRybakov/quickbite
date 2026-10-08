@@ -30,8 +30,7 @@ public class App {
     private final RestaurantCatalog catalog = new RestaurantCatalog();
     private final PickupSlots pickupSlots = new PickupSlots();
     private final OrderRepository orderRepository = new OrderRepository();
-    private final OrderService orderService =
-            new OrderService(orderRepository, pickupSlots);
+    private final OrderService orderService = new OrderService(orderRepository, pickupSlots);
 
     private final Map<String, Visitor> visitors = new ConcurrentHashMap<>();
 
@@ -223,7 +222,14 @@ public class App {
             throws IOException {
 
         Map<String, String> form = readForm(exchange);
-        String selected = form.getOrDefault("pickupTime", "");
+        String selected = form.getOrDefault("pickupTime", "").trim();
+
+        if (selected.isEmpty()) {
+            visitor.error = "Please select a valid future pickup time.";
+            visitor.selectedPickupTime = null;
+            redirect(exchange, "/checkout");
+            return;
+        }
 
         try {
             Order order = orderService.submit(visitor.cart, selected);

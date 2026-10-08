@@ -200,4 +200,14 @@ class OrderServiceTest {
         assertThrows(UnsupportedOperationException.class,
                 () -> order.items().clear());
     }
+
+    @Test
+    void rejectsSubmissionWhenPickupTimeIsBlank() {
+        Cart cart = createCart();
+
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.submit(cart, "   "));
+        assertTrue(ex.getMessage().contains("Please select a valid future pickup time"));
+    }
 }
