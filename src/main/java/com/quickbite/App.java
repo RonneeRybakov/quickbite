@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +16,7 @@ import com.quickbite.cart.Cart;
 import com.quickbite.menu.MenuItem;
 import com.quickbite.menu.Restaurant;
 import com.quickbite.menu.RestaurantCatalog;
+import com.quickbite.pickup.PickupSlots;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -24,6 +26,7 @@ public class App {
     private static final int PORT = 8080;
 
     private final RestaurantCatalog catalog = new RestaurantCatalog();
+    private final PickupSlots pickupSlots = new PickupSlots();
     private final Map<String, Visitor> visitors = new ConcurrentHashMap<>();
 
     /** What we remember about one browser between requests. */
@@ -31,6 +34,8 @@ public class App {
         final Cart cart = new Cart();
         String message;
         String error;
+        String selectedPickupTime;
+        String orderSummary;
     }
 
     public static void main(String[] args) throws IOException {
@@ -59,32 +64,55 @@ public class App {
 
         } else if (method.equals("GET") && path.startsWith("/restaurants/")) {
             // PBI-02: view a restaurant's menu
-            Optional<Restaurant> restaurant = catalog.findById(path.substring("/restaurants/".length()));
+            Optional<Restaurant> restaurant = catalog.findById(
+                    path.substring("/restaurants/".length()));
+
             if (restaurant.isEmpty()) {
                 sendHtml(exchange, 404, Pages.notFound(visitor.cart));
                 return;
             }
-            sendHtml(exchange, 200, Pages.menu(restaurant.get(), visitor.cart, takeMessage(visitor), takeError(visitor)));
+
+            sendHtml(exchange, 200, Pages.menu(
+                    restaurant.get(), visitor.cart,
+                    takeMessage(visitor), takeError(visitor)));
 
         } else if (method.equals("GET") && path.equals("/cart")) {
             // PBI-03 and PBI-04: view and edit the cart
-            sendHtml(exchange, 200, Pages.cart(visitor.cart, takeMessage(visitor), takeError(visitor)));
+            sendHtml(exchange, 200, Pages.cart(
+                    visitor.cart, takeMessage(visitor), takeError(visitor)));
 
         } else if (method.equals("POST") && path.equals("/cart/add")) {
             addToCart(exchange, visitor);
 
         } else if (method.equals("POST") && path.equals("/cart/update")) {
-            // PBI-04: update item quantity
             updateCart(exchange, visitor);
 
         } else if (method.equals("POST") && path.equals("/cart/remove")) {
-            // PBI-04: remove an individual item
             removeFromCart(exchange, visitor);
 
         } else if (method.equals("POST") && path.equals("/cart/clear")) {
             visitor.cart.clear();
+            visitor.selectedPickupTime = null;
+            visitor.error = null;
             visitor.message = "Your cart has been cleared.";
             redirect(exchange, "/cart");
+
+        } else if (method.equals("GET") && path.equals("/checkout")) {
+            // PBI-05: display available pickup times
+            showCheckout(exchange, visitor);
+
+        } else if (method.equals("POST") && path.equals("/checkout")) {
+            // PBI-05: validate pickup time and submit order
+            submitOrder(exchange, visitor);
+
+        } else if (method.equals("GET") && path.equals("/order/summary")) {
+            if (visitor.orderSummary == null) {
+                redirect(exchange, "/");
+                return;
+            }
+
+            sendHtml(exchange, 200, Pages.orderSummary(
+                    visitor.orderSummary, visitor.cart));
 
         } else {
             sendHtml(exchange, 404, Pages.notFound(visitor.cart));
@@ -93,8 +121,11 @@ public class App {
 
     private void addToCart(HttpExchange exchange, Visitor visitor) throws IOException {
         Map<String, String> form = readForm(exchange);
-        Optional<Restaurant> restaurant = catalog.findById(form.getOrDefault("restaurantId", ""));
-        Optional<MenuItem> item = restaurant.flatMap(r -> r.findItem(form.getOrDefault("itemId", "")));
+        Optional<Restaurant> restaurant = catalog.findById(
+                form.getOrDefault("restaurantId", ""));
+        Optional<MenuItem> item = restaurant.flatMap(
+                r -> r.findItem(form.getOrDefault("itemId", "")));
+
         if (item.isEmpty()) {
             sendHtml(exchange, 404, Pages.notFound(visitor.cart));
             return;
@@ -103,11 +134,14 @@ public class App {
         if (visitor.cart.add(restaurant.get(), item.get())) {
             visitor.message = item.get().name() + " added to your cart.";
             visitor.error = null;
+            visitor.selectedPickupTime = null;
         } else {
-            visitor.error = "Your cart has items from " + visitor.cart.getRestaurant().name()
+            visitor.error = "Your cart has items from "
+                    + visitor.cart.getRestaurant().name()
                     + ". Clear your cart before ordering from another restaurant.";
             visitor.message = null;
         }
+
         redirect(exchange, "/restaurants/" + restaurant.get().id());
     }
 
@@ -125,10 +159,10 @@ public class App {
 
             if (visitor.cart.updateQuantity(itemId, quantity)) {
                 visitor.message = "Item quantity updated.";
+                visitor.selectedPickupTime = null;
             } else {
                 visitor.error = "Invalid quantity or item.";
             }
-
         } catch (NumberFormatException e) {
             visitor.error = "Please enter a positive whole number.";
         }
@@ -146,6 +180,7 @@ public class App {
 
         if (visitor.cart.removeItem(itemId)) {
             visitor.message = "Item removed from your cart.";
+            visitor.selectedPickupTime = null;
         } else {
             visitor.error = "Item not found in your cart.";
         }
@@ -153,23 +188,81 @@ public class App {
         redirect(exchange, "/cart");
     }
 
+    /** PBI-05: Displays checkout with restaurant-specific pickup slots. */
+    private void showCheckout(HttpExchange exchange, Visitor visitor) throws IOException {
+        if (visitor.cart.isEmpty()) {
+            visitor.error = "Your cart is empty. Add items before checkout.";
+            redirect(exchange, "/cart");
+            return;
+        }
+
+        Restaurant restaurant = visitor.cart.getRestaurant();
+
+        sendHtml(exchange, 200, Pages.checkout(
+                visitor.cart,
+                pickupSlots.availableFor(restaurant),
+                visitor.selectedPickupTime,
+                takeError(visitor)));
+    }
+
+    /** PBI-05: Validates the pickup time before accepting the order. */
+    private void submitOrder(HttpExchange exchange, Visitor visitor) throws IOException {
+        if (visitor.cart.isEmpty()) {
+            visitor.error = "Cannot submit an empty cart.";
+            redirect(exchange, "/cart");
+            return;
+        }
+
+        Map<String, String> form = readForm(exchange);
+        String selected = form.getOrDefault("pickupTime", "");
+
+        Restaurant restaurant = visitor.cart.getRestaurant();
+
+        if (!pickupSlots.isValid(restaurant, selected)) {
+            visitor.selectedPickupTime = selected;
+            visitor.error = "Please select a valid future pickup time.";
+            redirect(exchange, "/checkout");
+            return;
+        }
+
+        LocalDateTime pickupTime = LocalDateTime.parse(selected);
+
+        visitor.orderSummary = Pages.buildOrderSummary(
+                visitor.cart, pickupTime);
+        visitor.selectedPickupTime = null;
+        visitor.error = null;
+        visitor.message = null;
+
+        visitor.cart.clear();
+
+        redirect(exchange, "/order/summary");
+    }
+
     // --- Small HTTP helpers ---
 
     /** Finds the visitor by their session cookie, or starts a new session. */
     private Visitor visitorFor(HttpExchange exchange) {
         String cookies = exchange.getRequestHeaders().getFirst("Cookie");
+
         if (cookies != null) {
             for (String cookie : cookies.split(";")) {
                 String[] pair = cookie.trim().split("=", 2);
-                if (pair[0].equals("session") && pair.length == 2 && visitors.containsKey(pair[1])) {
+
+                if (pair.length == 2
+                        && pair[0].equals("session")
+                        && visitors.containsKey(pair[1])) {
                     return visitors.get(pair[1]);
                 }
             }
         }
+
         String id = UUID.randomUUID().toString();
         Visitor visitor = new Visitor();
         visitors.put(id, visitor);
-        exchange.getResponseHeaders().add("Set-Cookie", "session=" + id + "; Path=/; HttpOnly; SameSite=Lax");
+
+        exchange.getResponseHeaders().add(
+                "Set-Cookie", "session=" + id + "; Path=/; HttpOnly; SameSite=Lax");
+
         return visitor;
     }
 
@@ -186,19 +279,25 @@ public class App {
     }
 
     private static Map<String, String> readForm(HttpExchange exchange) throws IOException {
-        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String body = new String(
+                exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Map<String, String> form = new HashMap<>();
+
         for (String field : body.split("&")) {
             String[] pair = field.split("=", 2);
+
             if (pair.length == 2) {
-                form.put(URLDecoder.decode(pair[0], StandardCharsets.UTF_8),
+                form.put(
+                        URLDecoder.decode(pair[0], StandardCharsets.UTF_8),
                         URLDecoder.decode(pair[1], StandardCharsets.UTF_8));
             }
         }
+
         return form;
     }
 
-    private static void sendHtml(HttpExchange exchange, int status, String html) throws IOException {
+    private static void sendHtml(HttpExchange exchange, int status, String html)
+            throws IOException {
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
         exchange.sendResponseHeaders(status, bytes.length);
@@ -206,8 +305,9 @@ public class App {
         exchange.close();
     }
 
-    /** Sends the browser to another page after a form post (Post/Redirect/Get). */
-    private static void redirect(HttpExchange exchange, String location) throws IOException {
+    /** Sends the browser to another page after a form post. */
+    private static void redirect(HttpExchange exchange, String location)
+            throws IOException {
         exchange.getResponseHeaders().set("Location", location);
         exchange.sendResponseHeaders(303, -1);
         exchange.close();
