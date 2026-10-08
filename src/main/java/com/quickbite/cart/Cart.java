@@ -1,3 +1,4 @@
+
 package com.quickbite.cart;
 
 import java.math.BigDecimal;
@@ -29,6 +30,39 @@ public class Cart {
         return true;
     }
 
+    /**
+     * Updates the quantity of an item already in the cart.
+     * Only positive whole-number quantities are accepted.
+     *
+     * @return false if the quantity is invalid or the item does not exist
+     */
+    public boolean updateQuantity(String itemId, int quantity) {
+        if (quantity <= 0 || !lines.containsKey(itemId)) {
+            return false;
+        }
+
+        CartLine existing = lines.get(itemId);
+        lines.put(itemId, new CartLine(existing.item(), quantity));
+        return true;
+    }
+
+    /**
+     * Removes an individual item from the cart.
+     *
+     * @return false if the item does not exist
+     */
+    public boolean removeItem(String itemId) {
+        if (lines.remove(itemId) == null) {
+            return false;
+        }
+
+        if (lines.isEmpty()) {
+            restaurant = null;
+        }
+
+        return true;
+    }
+
     public void clear() {
         lines.clear();
         restaurant = null;
@@ -44,7 +78,7 @@ public class Cart {
     }
 
     public Collection<CartLine> getLines() {
-        return lines.values();
+        return java.util.List.copyOf(lines.values());
     }
 
     public int getItemCount() {
