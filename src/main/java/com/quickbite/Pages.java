@@ -1,3 +1,4 @@
+
 package com.quickbite;
 
 import java.math.BigDecimal;
@@ -28,6 +29,8 @@ public final class Pages {
             .muted { color: #777; }
             .message { background: #e6f4ea; padding: 8px 12px; }
             .error { background: #fdecea; padding: 8px 12px; }
+            button { cursor: pointer; padding: 5px 10px; }
+            input[type=number] { padding: 5px; margin-right: 6px; }
             """;
 
     /** PBI-01: list of restaurants. */
@@ -67,23 +70,61 @@ public final class Pages {
         return layout(restaurant.name(), cart, body.toString());
     }
 
-    /** PBI-03: the cart with quantities, subtotals and total. */
-    public static String cart(Cart cart, String message) {
-        StringBuilder body = new StringBuilder("<h1>Your cart</h1>").append(flash(message, null));
+    /** PBI-03 and PBI-04: view and edit the cart. */
+    public static String cart(Cart cart, String message, String error) {
+        StringBuilder body = new StringBuilder("<h1>Your cart</h1>")
+                .append(flash(message, error));
+
         if (cart.isEmpty()) {
-            body.append("<p class='muted'>Your cart is empty. <a href='/'>Browse restaurants</a></p>");
+            body.append("<p class='muted'>Your cart is empty. ")
+                    .append("Add items from a restaurant before placing an order. ")
+                    .append("<a href='/'>Browse restaurants</a></p>");
         } else {
             Restaurant r = cart.getRestaurant();
-            body.append("<p>Ordering from <a href='/restaurants/").append(esc(r.id())).append("'>")
+
+            body.append("<p>Ordering from <a href='/restaurants/")
+                    .append(esc(r.id())).append("'>")
                     .append(esc(r.name())).append("</a></p>")
-                    .append("<table><tr><th>Item</th><th>Quantity</th><th>Subtotal</th></tr>");
+                    .append("<table><tr><th>Item</th><th>Quantity</th>")
+                    .append("<th>Subtotal</th><th>Action</th></tr>");
+
             for (CartLine line : cart.getLines()) {
-                body.append("<tr><td>").append(esc(line.item().name())).append("</td><td>").append(line.quantity())
-                        .append("</td><td>").append(money(line.subtotal())).append("</td></tr>");
+                String itemId = esc(line.item().id());
+
+                body.append("<tr><td>")
+                        .append(esc(line.item().name()))
+                        .append("</td><td>")
+
+                        // Update quantity
+                        .append("<form method='post' action='/cart/update'>")
+                        .append("<input type='hidden' name='itemId' value='")
+                        .append(itemId).append("'>")
+                        .append("<input type='number' name='quantity' min='1' step='1' value='")
+                        .append(line.quantity())
+                        .append("' required style='width:60px'>")
+                        .append("<button type='submit'>Update</button>")
+                        .append("</form></td><td>")
+
+                        // Item subtotal
+                        .append(money(line.subtotal()))
+                        .append("</td><td>")
+
+                        // Remove item
+                        .append("<form method='post' action='/cart/remove'>")
+                        .append("<input type='hidden' name='itemId' value='")
+                        .append(itemId).append("'>")
+                        .append("<button type='submit'>Remove</button>")
+                        .append("</form></td></tr>");
             }
-            body.append("<tr><th colspan='2'>Total</th><th>").append(money(cart.getTotal())).append("</th></tr></table>")
-                    .append("<form method='post' action='/cart/clear'><button>Clear cart</button></form>");
+
+            body.append("<tr><th colspan='2'>Total</th><th>")
+                    .append(money(cart.getTotal()))
+                    .append("</th><th></th></tr></table>")
+                    .append("<form method='post' action='/cart/clear'>")
+                    .append("<button type='submit'>Clear cart</button>")
+                    .append("</form>");
         }
+
         return layout("Your cart", cart, body.toString());
     }
 
